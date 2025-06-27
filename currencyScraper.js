@@ -1,69 +1,43 @@
-import puppeteer from 'puppeteer';
+import {chromium} from "playwright";
 
-function isValidCurrency(currency) {
-    const validCurrencies = [
-        "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN",
-        "BAM", "BBD", "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BRL", "BSD",
-        "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHF", "CLP", "CNY", "COP",
-        "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN",
-        "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GGP", "GHS", "GIP", "GMD",
-        "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR", "ILS",
-        "IMP", "INR", "IQD", "IRR", "ISK", "JEP", "JMD", "JPY", "KES", "KGS",
-        "KHR", "KID", "KMF", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR",
-        "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP",
-        "MRU", "MUR", "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO",
-        "NOK", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG",
-        "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK",
-        "SGD", "SHP", "SLL", "SOS", "SRD", "SSP", "STN", "SYP", "SZL", "THB",
-        "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX",
-        "USD", "UYU", "UZS", "VEF", "VND", "VUV", "WST", "XAF", "XAG", "XAU",
-        "XCD", "XOF", "XPF", "YER", "ZAR", "ZMW", "ZWL"
-    ];
-    return validCurrencies.includes(currency.toUpperCase());
-}
+const from = process.argv[2] || "GBP";
+const to = process.argv[3] || "USD";
+const amount = process.argv[4] || "1";
 
-
-async function convertCurrency(sourceCurrency, targetCurrency, amount) {
-    if (!isValidCurrency(sourceCurrency) || !isValidCurrency(targetCurrency)) {
-        console.error("Invalid currency code entered.");
-        return { convertedValue: null };
-    }
-
-    const url = `https://www.currency.wiki/${sourceCurrency.toLowerCase()}_${targetCurrency.toLowerCase()}?value=${amount}`;
-
-    const browser = await puppeteer.launch();
+async function setBrowser() {
+    const browser = await chromium.launch({ headless: false });
     const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    return { browser, page };
+}
 
+async function navigateAndScrape(page, from, to, amount) {
+    const url = `https://www.x-rates.com/calculator/?from=${from}&to=${to}&amount=${amount}`;
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".ccOutputBx", { timeout: 10000 });
+
+    return await page.evaluate(() => {
+        const box = document.querySelector(".ccOutputBx");
+        if (!box) return null;
+        const txt = box.querySelector(".ccOutputTxt")?.innerText || "";
+        const rslt = box.querySelector(".ccOutputRslt")?.cloneNode(true);
+        rslt?.querySelector(".ccOutputCode")?.remove();
+        const rsltText = rslt?.innerText || "";
+        return { text: txt, result: rsltText };
+    });
+}
+
+async function main(from, to, amount) {
     try {
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-        const convertedValue = await page.evaluate(() => {
-            const convertedCurrencyElement = document.querySelector('.converted-currency');
-            if (convertedCurrencyElement) {
-                return convertedCurrencyElement.innerText.trim();
-            }
-            return null;
-        });
-
-        if (!convertedValue) {
-            console.error(`Conversion rate not found for ${sourceCurrency} to ${targetCurrency}`);
-            return { convertedValue: null };
-        }
-
-        console.log(`${amount} ${sourceCurrency} = ${convertedValue}`);
-        return { convertedValue };
-
-    } catch (error) {
-        console.error('Error occurred during scraping:', error);
-    } finally {
+        const { browser, page } = await setBrowser();
+        const data = await navigateAndScrape(page, from, to, amount);
         await browser.close();
+        console.log(JSON.stringify(data));
+    } catch (error) {
+        console.error("Scraping failed:", error);
     }
 }
 
-const sourceCurrency = process.argv[2];
-const targetCurrency = process.argv[3];
-const amount = process.argv[4];
-
-convertCurrency(sourceCurrency, targetCurrency, amount).then(result => {
-    console.log(JSON.stringify(result));
-});
+(async () => {
+    await main(from, to, amount);
+})();
